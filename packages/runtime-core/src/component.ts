@@ -820,11 +820,6 @@ let installWithProxy: (i: ComponentInternalInstance) => void
  */
 export function registerRuntimeCompiler(_compile: any) {
   compile = _compile
-  installWithProxy = i => {
-    if (i.render!._rc) {
-      i.withProxy = new Proxy(i.ctx, RuntimeCompiledPublicInstanceProxyHandlers)
-    }
-  }
 }
 
 // dev only
