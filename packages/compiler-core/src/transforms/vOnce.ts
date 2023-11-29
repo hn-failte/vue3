@@ -11,8 +11,11 @@ export const transformOnce: NodeTransform = (node, context) => {
       return
     }
     seen.add(node)
+    // 添加vonce标识
     context.inVOnce = true
     context.helper(SET_BLOCK_TRACKING)
+
+    // 退出回调。将会在回调中会赋值 codegenNode
     return () => {
       context.inVOnce = false
       const cur = context.currentNode as ElementNode | IfNode | ForNode

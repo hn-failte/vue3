@@ -233,8 +233,7 @@ export function processExpression(
       !isLiteral &&
       (!isAllowedGlobal || bindingMetadata[rawExp])
     ) {
-      // const bindings exposed from setup can be skipped for patching but
-      // cannot be hoisted to module scope
+      // setup 中的常量绑定可以跳过更新，但不能提升到模块范围
       if (isConst(bindingMetadata[rawExp])) {
         node.constType = ConstantTypes.CAN_SKIP_PATCH
       }

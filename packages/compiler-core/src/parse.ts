@@ -105,10 +105,15 @@ export function baseParse(
   content: string,
   options: ParserOptions = {}
 ): RootNode {
+  // 创建解析上下文
   const context = createParserContext(content, options)
+  // 获取解析起始位置
   const start = getCursor(context)
+  // 创建 AST 根节点
   return createRoot(
+    // 解析 context 下的子节点
     parseChildren(context, TextModes.DATA, []),
+    // 获取解析范围，将返回起始位置、结束位置和源码
     getSelection(context, start)
   )
 }
@@ -145,31 +150,33 @@ function parseChildren(
   mode: TextModes,
   ancestors: ElementNode[]
 ): TemplateChildNode[] {
+  // 最后一个祖先节点，即直系祖先节点，也就是父类
   const parent = last(ancestors)
   const ns = parent ? parent.ns : Namespaces.HTML
   const nodes: TemplateChildNode[] = []
 
   while (!isEnd(context, mode, ancestors)) {
-    __TEST__ && assert(context.source.length > 0)
     const s = context.source
     let node: TemplateChildNode | TemplateChildNode[] | undefined = undefined
 
+    // 尝试解析出 node
     if (mode === TextModes.DATA || mode === TextModes.RCDATA) {
       if (!context.inVPre && startsWith(s, context.options.delimiters[0])) {
-        // '{{'
+        // 解析界限符'{{'
         node = parseInterpolation(context, mode)
       } else if (mode === TextModes.DATA && s[0] === '<') {
-        // https://html.spec.whatwg.org/multipage/parsing.html#tag-open-state
+        // 开始标签
         if (s.length === 1) {
           emitError(context, ErrorCodes.EOF_BEFORE_TAG_NAME, 1)
         } else if (s[1] === '!') {
-          // https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state
+          // 注释标签
           if (startsWith(s, '<!--')) {
             node = parseComment(context)
           } else if (startsWith(s, '<!DOCTYPE')) {
-            // Ignore DOCTYPE by a limitation.
+            // 解析 DOCTYPE 伪注释
             node = parseBogusComment(context)
           } else if (startsWith(s, '<![CDATA[')) {
+            // 解析 CDATA（CDATA标签内的纯文本可以免转义）
             if (ns !== Namespaces.HTML) {
               node = parseCDATA(context, ancestors)
             } else {
@@ -181,7 +188,7 @@ function parseChildren(
             node = parseBogusComment(context)
           }
         } else if (s[1] === '/') {
-          // https://html.spec.whatwg.org/multipage/parsing.html#end-tag-open-state
+          // 解析不正常的结束标签（<后不能马上接/，这表示结束标签）
           if (s.length === 2) {
             emitError(context, ErrorCodes.EOF_BEFORE_TAG_NAME, 2)
           } else if (s[2] === '>') {
@@ -201,9 +208,10 @@ function parseChildren(
             node = parseBogusComment(context)
           }
         } else if (/[a-z]/i.test(s[1])) {
+          // 解析节点元素
           node = parseElement(context, ancestors)
 
-          // 2.x <template> with no directive compat
+          // 兼容2.x版本不带指令的template标签
           if (
             __COMPAT__ &&
             isCompatEnabled(
@@ -218,12 +226,6 @@ function parseChildren(
                 isSpecialTemplateDirective(p.name)
             )
           ) {
-            __DEV__ &&
-              warnDeprecation(
-                CompilerDeprecationTypes.COMPILER_NATIVE_TEMPLATE,
-                context,
-                node.loc
-              )
             node = node.children
           }
         } else if (s[1] === '?') {
@@ -238,6 +240,7 @@ function parseChildren(
         }
       }
     }
+    // 若未解析出 node，则作为纯文本解析
     if (!node) {
       node = parseText(context, mode)
     }
@@ -252,6 +255,7 @@ function parseChildren(
   }
 
   // Whitespace handling strategy like v2
+  // 继承vue2对空白的处理
   let removedWhitespace = false
   if (mode !== TextModes.RAWTEXT && mode !== TextModes.RCDATA) {
     const shouldCondense = context.options.whitespace !== 'preserve'
@@ -338,20 +342,16 @@ function pushNode(nodes: TemplateChildNode[], node: TemplateChildNode): void {
   nodes.push(node)
 }
 
+// 解析 CDATA
 function parseCDATA(
   context: ParserContext,
   ancestors: ElementNode[]
 ): TemplateChildNode[] {
-  __TEST__ &&
-    assert(last(ancestors) == null || last(ancestors)!.ns !== Namespaces.HTML)
-  __TEST__ && assert(startsWith(context.source, '<![CDATA['))
-
   advanceBy(context, 9)
   const nodes = parseChildren(context, TextModes.CDATA, ancestors)
   if (context.source.length === 0) {
     emitError(context, ErrorCodes.EOF_IN_CDATA)
   } else {
-    __TEST__ && assert(startsWith(context.source, ']]>'))
     advanceBy(context, 3)
   }
 
@@ -400,9 +400,8 @@ function parseComment(context: ParserContext): CommentNode {
   }
 }
 
+// 解析伪注释
 function parseBogusComment(context: ParserContext): CommentNode | undefined {
-  __TEST__ && assert(/^<(?:[\!\?]|\/[^a-z>])/i.test(context.source))
-
   const start = getCursor(context)
   const contentStart = context.source[1] === '?' ? 1 : 2
   let content: string
@@ -423,38 +422,23 @@ function parseBogusComment(context: ParserContext): CommentNode | undefined {
   }
 }
 
+// 解析节点元素
 function parseElement(
   context: ParserContext,
   ancestors: ElementNode[]
 ): ElementNode | undefined {
-  __TEST__ && assert(/^<[a-z]/i.test(context.source))
-
-  // Start tag.
-  const wasInPre = context.inPre
-  const wasInVPre = context.inVPre
   const parent = last(ancestors)
+  // 开始标签
   const element = parseTag(context, TagType.Start, parent)
-  const isPreBoundary = context.inPre && !wasInPre
-  const isVPreBoundary = context.inVPre && !wasInVPre
 
-  if (element.isSelfClosing || context.options.isVoidTag(element.tag)) {
-    // #4030 self-closing <pre> tag
-    if (isPreBoundary) {
-      context.inPre = false
-    }
-    if (isVPreBoundary) {
-      context.inVPre = false
-    }
-    return element
-  }
-
-  // Children.
+  // 对于子节点而言，当前元素是最后的祖先元素
   ancestors.push(element)
   const mode = context.options.getTextMode(element, parent)
+  // 把当前节点作为祖先节点，继续解析子节点，parseChildren实现了递归
   const children = parseChildren(context, mode, ancestors)
   ancestors.pop()
 
-  // 2.x inline-template compat
+  // vue2 内联 template 兼容
   if (__COMPAT__) {
     const inlineTemplateProp = element.props.find(
       p => p.type === NodeTypes.ATTRIBUTE && p.name === 'inline-template'
@@ -478,27 +462,13 @@ function parseElement(
 
   element.children = children
 
-  // End tag.
+  // 结束标签
   if (startsWithEndTagOpen(context.source, element.tag)) {
     parseTag(context, TagType.End, parent)
-  } else {
-    emitError(context, ErrorCodes.X_MISSING_END_TAG, 0, element.loc.start)
-    if (context.source.length === 0 && element.tag.toLowerCase() === 'script') {
-      const first = children[0]
-      if (first && startsWith(first.loc.source, '<!--')) {
-        emitError(context, ErrorCodes.EOF_IN_SCRIPT_HTML_COMMENT_LIKE_TEXT)
-      }
-    }
   }
 
   element.loc = getSelection(context, element.loc.start)
 
-  if (isPreBoundary) {
-    context.inPre = false
-  }
-  if (isVPreBoundary) {
-    context.inVPre = false
-  }
   return element
 }
 
@@ -529,110 +499,50 @@ function parseTag(
   type: TagType,
   parent: ElementNode | undefined
 ): ElementNode | undefined {
-  __TEST__ && assert(/^<\/?[a-z]/i.test(context.source))
-  __TEST__ &&
-    assert(
-      type === (startsWith(context.source, '</') ? TagType.End : TagType.Start)
-    )
-
-  // Tag open.
+  // 开始位置
   const start = getCursor(context)
+  // 将匹配到 <xxx，若为自闭合，则匹配</xxx
   const match = /^<\/?([a-z][^\t\r\n\f />]*)/i.exec(context.source)!
+  // 标签名
   const tag = match[1]
   const ns = context.options.getNamespace(tag, parent)
 
+  // 根据开始标签进位
   advanceBy(context, match[0].length)
+  // 根据空格进位，避免后续匹配首位为空格
   advanceSpaces(context)
 
-  // save current state in case we need to re-parse attributes with v-pre
-  const cursor = getCursor(context)
-  const currentSource = context.source
-
-  // check <pre> tag
-  if (context.options.isPreTag(tag)) {
-    context.inPre = true
-  }
-
-  // Attributes.
+  // 解析属性
   let props = parseAttributes(context, type)
 
-  // check v-pre
-  if (
-    type === TagType.Start &&
-    !context.inVPre &&
-    props.some(p => p.type === NodeTypes.DIRECTIVE && p.name === 'pre')
-  ) {
-    context.inVPre = true
-    // reset context
-    extend(context, cursor)
-    context.source = currentSource
-    // re-parse attrs and filter out v-pre itself
-    props = parseAttributes(context, type).filter(p => p.name !== 'v-pre')
-  }
-
-  // Tag close.
+  // 自闭合
   let isSelfClosing = false
-  if (context.source.length === 0) {
-    emitError(context, ErrorCodes.EOF_IN_TAG)
-  } else {
-    isSelfClosing = startsWith(context.source, '/>')
-    if (type === TagType.End && isSelfClosing) {
-      emitError(context, ErrorCodes.END_TAG_WITH_TRAILING_SOLIDUS)
-    }
-    advanceBy(context, isSelfClosing ? 2 : 1)
-  }
+
+  isSelfClosing = startsWith(context.source, '/>')
+  // 自闭合标签为>，普通标签为/>
+  advanceBy(context, isSelfClosing ? 2 : 1)
 
   if (type === TagType.End) {
     return
   }
 
-  // 2.x deprecation checks
-  if (
-    __COMPAT__ &&
-    __DEV__ &&
-    isCompatEnabled(
-      CompilerDeprecationTypes.COMPILER_V_IF_V_FOR_PRECEDENCE,
-      context
-    )
-  ) {
-    let hasIf = false
-    let hasFor = false
-    for (let i = 0; i < props.length; i++) {
-      const p = props[i]
-      if (p.type === NodeTypes.DIRECTIVE) {
-        if (p.name === 'if') {
-          hasIf = true
-        } else if (p.name === 'for') {
-          hasFor = true
-        }
-      }
-      if (hasIf && hasFor) {
-        warnDeprecation(
-          CompilerDeprecationTypes.COMPILER_V_IF_V_FOR_PRECEDENCE,
-          context,
-          getSelection(context, start)
-        )
-        break
-      }
-    }
-  }
-
   let tagType = ElementTypes.ELEMENT
-  if (!context.inVPre) {
-    if (tag === 'slot') {
-      tagType = ElementTypes.SLOT
-    } else if (tag === 'template') {
-      if (
-        props.some(
-          p =>
-            p.type === NodeTypes.DIRECTIVE && isSpecialTemplateDirective(p.name)
-        )
-      ) {
-        tagType = ElementTypes.TEMPLATE
-      }
-    } else if (isComponent(tag, props, context)) {
-      tagType = ElementTypes.COMPONENT
+
+  if (tag === 'slot') {
+    tagType = ElementTypes.SLOT
+  } else if (tag === 'template') {
+    if (
+      // 查找template下是否存在if、else、else-if、for、slot的指令
+      props.some(
+        p =>
+          p.type === NodeTypes.DIRECTIVE && isSpecialTemplateDirective(p.name)
+      )
+    ) {
+      // 若有，则定义tagType为TEMPLATE，若没有则为默认的ELEMENT
+      tagType = ElementTypes.TEMPLATE
     }
+  } else if (isComponent(tag, props, context)) {
+    tagType = ElementTypes.COMPONENT
   }
 
   return {
@@ -664,34 +574,40 @@ function isComponent(
     (options.isBuiltInComponent && options.isBuiltInComponent(tag)) ||
     (options.isNativeTag && !options.isNativeTag(tag))
   ) {
+    // 若tag是component、或tag名称是以大写字母开头、或是核心组件、或平台专属组件、或非原生标签，则直接返回
     return true
   }
-  // at this point the tag should be a native tag, but check for potential "is"
-  // casting
+  // 此时标签应该是原生标签，但检查潜在的“is”转换
   for (let i = 0; i < props.length; i++) {
     const p = props[i]
+    // 若prop的类型为属性值
     if (p.type === NodeTypes.ATTRIBUTE) {
+      // 若存在属性is且存在值，则认为是组件（vue3）
       if (p.name === 'is' && p.value) {
+        // 若以vue:开头，则认为是组件
         if (p.value.content.startsWith('vue:')) {
           return true
         } else if (
+          // 处理vue2兼容
           __COMPAT__ &&
           checkCompatEnabled(
             CompilerDeprecationTypes.COMPILER_IS_ON_ELEMENT,
             context,
             p.loc
           )
+          // 这里存在隐性的return undefined
         ) {
           return true
         }
       }
     } else {
-      // directive
+      // prop类型不为属性值，则是指令
       // v-is (TODO: remove in 3.4)
+      // 若存在is指令，则认为是组件（vue3）
       if (p.name === 'is') {
         return true
       } else if (
-        // :is on plain element - only treat as component in compat mode
+        // 动态的is在原生元素上用兼容模式对待
         p.name === 'bind' &&
         isStaticArgOf(p.arg, 'is') &&
         __COMPAT__ &&
@@ -700,6 +616,7 @@ function isComponent(
           context,
           p.loc
         )
+        // 这里存在隐性的return undefined
       ) {
         return true
       }
@@ -718,20 +635,8 @@ function parseAttributes(
     !startsWith(context.source, '>') &&
     !startsWith(context.source, '/>')
   ) {
-    if (startsWith(context.source, '/')) {
-      emitError(context, ErrorCodes.UNEXPECTED_SOLIDUS_IN_TAG)
-      advanceBy(context, 1)
-      advanceSpaces(context)
-      continue
-    }
-    if (type === TagType.End) {
-      emitError(context, ErrorCodes.END_TAG_WITH_ATTRIBUTES)
-    }
-
     const attr = parseAttribute(context, attributeNames)
 
-    // Trim whitespace between class
-    // https://github.com/vuejs/core/issues/4251
     if (
       attr.type === NodeTypes.ATTRIBUTE &&
       attr.value &&
@@ -756,65 +661,56 @@ function parseAttribute(
   context: ParserContext,
   nameSet: Set<string>
 ): AttributeNode | DirectiveNode {
-  __TEST__ && assert(/^[^\t\r\n\f />]/.test(context.source))
-
-  // Name.
   const start = getCursor(context)
   const match = /^[^\t\r\n\f />][^\t\r\n\f />=]*/.exec(context.source)!
+  // 属性名
   const name = match[0]
 
-  if (nameSet.has(name)) {
-    emitError(context, ErrorCodes.DUPLICATE_ATTRIBUTE)
-  }
   nameSet.add(name)
 
-  if (name[0] === '=') {
-    emitError(context, ErrorCodes.UNEXPECTED_EQUALS_SIGN_BEFORE_ATTRIBUTE_NAME)
-  }
-  {
-    const pattern = /["'<]/g
-    let m: RegExpExecArray | null
-    while ((m = pattern.exec(name))) {
-      emitError(
-        context,
-        ErrorCodes.UNEXPECTED_CHARACTER_IN_ATTRIBUTE_NAME,
-        m.index
-      )
-    }
-  }
-
+  // 属性名进位
   advanceBy(context, name.length)
 
-  // Value
+  // 属性值
   let value: AttributeValue = undefined
 
   if (/^[\t\r\n\f ]*=/.test(context.source)) {
+    // 等于符号前的空格进位
     advanceSpaces(context)
+    // 等于符号进位
     advanceBy(context, 1)
+    // 等于符号后的空格进位
     advanceSpaces(context)
+    // 解析属性值
     value = parseAttributeValue(context)
-    if (!value) {
-      emitError(context, ErrorCodes.MISSING_ATTRIBUTE_VALUE)
-    }
   }
   const loc = getSelection(context, start)
 
-  if (!context.inVPre && /^(v-[A-Za-z0-9-]|:|\.|@|#)/.test(name)) {
+  // 如果属性是以v-或:或.或@或#开头
+  if (/^(v-[A-Za-z0-9-]|:|\.|@|#)/.test(name)) {
+    // 匹配出指令的具体名称
+    // v-if的名称是match的元素2为if，:value是match的元素2为value
+    // @click是match的元素3为click，#footer是match的元素3为footer
     const match =
       /(?:^v-([a-z0-9-]+))?(?:(?::|^\.|^@|^#)(\[[^\]]+\]|[^\.]+))?(.+)?$/i.exec(
         name
       )!
 
+    // 若为.开头，则是缩写的属性
+    // .camel - 将短横线命名的 attribute 转变为驼峰式命名。
+    // .prop - 强制绑定为 DOM property。3.2+
+    // .attr - 强制绑定为 DOM attribute。3.2+
     let isPropShorthand = startsWith(name, '.')
     let dirName =
-      match[1] ||
+      match[1] || // 若为指令或属性
       (isPropShorthand || startsWith(name, ':')
-        ? 'bind'
+        ? 'bind' // 属性的dirName为bind
         : startsWith(name, '@')
-          ? 'on'
-          : 'slot')
+          ? 'on' // 事件的dirName为on
+          : 'slot') // 插槽的dirName为slot
     let arg: ExpressionNode | undefined
 
+    // 若为事件或插槽
     if (match[2]) {
       const isSlot = dirName === 'slot'
       const startOffset = name.lastIndexOf(
@@ -833,23 +729,14 @@ function parseAttribute(
       let content = match[2]
       let isStatic = true
 
+      // 若以[]包裹，则其属于动态插槽。如：<template #[slotName]>
       if (content.startsWith('[')) {
         isStatic = false
 
-        if (!content.endsWith(']')) {
-          emitError(
-            context,
-            ErrorCodes.X_MISSING_DYNAMIC_DIRECTIVE_ARGUMENT_END
-          )
-          content = content.slice(1)
-        } else {
+        if (content.endsWith(']')) {
+          // 动态插槽的变量名
           content = content.slice(1, content.length - 1)
         }
-      } else if (isSlot) {
-        // #1241 special case for v-slot: vuetify relies extensively on slot
-        // names containing dots. v-slot doesn't have any modifiers and Vue 2.x
-        // supports such usage so we are keeping it consistent with 2.x.
-        content += match[3] || ''
       }
 
       arg = {
@@ -863,50 +750,30 @@ function parseAttribute(
       }
     }
 
+    // 否则作为属性和指令处理
+    // 若值被引号包裹
     if (value && value.isQuoted) {
       const valueLoc = value.loc
+      // 偏移'='的字符长度
       valueLoc.start.offset++
       valueLoc.start.column++
+      // 将属性值的结束位置更新
       valueLoc.end = advancePositionWithClone(valueLoc.start, value.content)
+      // 源码中移除引号
       valueLoc.source = valueLoc.source.slice(1, -1)
     }
 
+    // 若存在修饰符
     const modifiers = match[3] ? match[3].slice(1).split('.') : []
     if (isPropShorthand) modifiers.push('prop')
 
-    // 2.x compat v-bind:foo.sync -> v-model:foo
-    if (__COMPAT__ && dirName === 'bind' && arg) {
-      if (
-        modifiers.includes('sync') &&
-        checkCompatEnabled(
-          CompilerDeprecationTypes.COMPILER_V_BIND_SYNC,
-          context,
-          loc,
-          arg.loc.source
-        )
-      ) {
-        dirName = 'model'
-        modifiers.splice(modifiers.indexOf('sync'), 1)
-      }
-
-      if (__DEV__ && modifiers.includes('prop')) {
-        checkCompatEnabled(
-          CompilerDeprecationTypes.COMPILER_V_BIND_PROP,
-          context,
-          loc
-        )
-      }
-    }
-
     return {
-      type: NodeTypes.DIRECTIVE,
+      type: NodeTypes.DIRECTIVE, // 所有事件、指令、插槽、动态属性都作为DIRECTIVE类型处理了
       name: dirName,
       exp: value && {
         type: NodeTypes.SIMPLE_EXPRESSION,
         content: value.content,
         isStatic: false,
-        // Treat as non-constant by default. This can be potentially set to
-        // other values by `transformExpression` to make it eligible for hoisting.
         constType: ConstantTypes.NOT_CONSTANT,
         loc: value.loc
       },
@@ -916,13 +783,8 @@ function parseAttribute(
     }
   }
 
-  // missing directive name or illegal directive name
-  if (!context.inVPre && startsWith(name, 'v-')) {
-    emitError(context, ErrorCodes.X_MISSING_DIRECTIVE_NAME)
-  }
-
   return {
-    type: NodeTypes.ATTRIBUTE,
+    type: NodeTypes.ATTRIBUTE, // 静态属性才作为了ATTRIBUTE类型
     name,
     value: value && {
       type: NodeTypes.TEXT,
@@ -938,11 +800,13 @@ function parseAttributeValue(context: ParserContext): AttributeValue {
   let content: string
 
   const quote = context.source[0]
+  // 是否存在引号
   const isQuoted = quote === `"` || quote === `'`
   if (isQuoted) {
-    // Quoted value.
+    // 进位开始引号的字符长度
     advanceBy(context, 1)
 
+    // 结束引号的位置
     const endIndex = context.source.indexOf(quote)
     if (endIndex === -1) {
       content = parseTextData(
@@ -952,22 +816,14 @@ function parseAttributeValue(context: ParserContext): AttributeValue {
       )
     } else {
       content = parseTextData(context, endIndex, TextModes.ATTRIBUTE_VALUE)
+      // 进位结束引号的字符长度
       advanceBy(context, 1)
     }
   } else {
-    // Unquoted
+    // 无引号
     const match = /^[^\t\r\n\f >]+/.exec(context.source)
     if (!match) {
       return undefined
-    }
-    const unexpectedChars = /["'<=`]/g
-    let m: RegExpExecArray | null
-    while ((m = unexpectedChars.exec(match[0]))) {
-      emitError(
-        context,
-        ErrorCodes.UNEXPECTED_CHARACTER_IN_UNQUOTED_ATTRIBUTE_VALUE,
-        m.index
-      )
     }
     content = parseTextData(context, match[0].length, TextModes.ATTRIBUTE_VALUE)
   }
@@ -975,31 +831,41 @@ function parseAttributeValue(context: ParserContext): AttributeValue {
   return { content, isQuoted, loc: getSelection(context, start) }
 }
 
+// 解析插值节点
 function parseInterpolation(
   context: ParserContext,
   mode: TextModes
 ): InterpolationNode | undefined {
   const [open, close] = context.options.delimiters
-  __TEST__ && assert(startsWith(context.source, open))
 
   const closeIndex = context.source.indexOf(close, open.length)
   if (closeIndex === -1) {
     emitError(context, ErrorCodes.X_MISSING_INTERPOLATION_END)
     return undefined
   }
-
+  // 获取整个界限符节点对应的当前行对应的位置、行数、字符位置
   const start = getCursor(context)
+  // 根据开始界限符进位
   advanceBy(context, open.length)
+  // 获取界限符节点内部内容对应的当前行对应的位置、行数、字符位置
   const innerStart = getCursor(context)
+  // 获取界限符节点内部内容结束时对应的当前行对应的位置、行数、字符位置
   const innerEnd = getCursor(context)
+  // 界限符节点内部内容的代码长度
   const rawContentLength = closeIndex - open.length
+  // 界限符节点内部内容的代码长度
   const rawContent = context.source.slice(0, rawContentLength)
+  // 解析界限符内部的原始内容
   const preTrimContent = parseTextData(context, rawContentLength, mode)
+  // 原始内容去除前后空格
   const content = preTrimContent.trim()
+  // 有效内容相对于原始内容的开始位置
   const startOffset = preTrimContent.indexOf(content)
   if (startOffset > 0) {
+    // 对空白内容进位
     advancePositionWithMutation(innerStart, rawContent, startOffset)
   }
+  // 结束界限符的位置
   const endOffset =
     rawContentLength - (preTrimContent.length - content.length - startOffset)
   advancePositionWithMutation(innerEnd, rawContent, endOffset)
@@ -1020,22 +886,24 @@ function parseInterpolation(
 }
 
 function parseText(context: ParserContext, mode: TextModes): TextNode {
-  __TEST__ && assert(context.source.length > 0)
-
+  // 若模式是 CDATA 模式，则结束的符号为']]>'，即标签内的文本作为纯文本处理，注意：html本身不支持 CDATA
+  // 否则应该是'<'和'{{'，即下一个节点之前都属于纯文本
   const endTokens =
     mode === TextModes.CDATA ? [']]>'] : ['<', context.options.delimiters[0]]
 
+  // 源码最后的位置
   let endIndex = context.source.length
   for (let i = 0; i < endTokens.length; i++) {
+    // 查找结束符号在源码中的位置
     const index = context.source.indexOf(endTokens[i], 1)
     if (index !== -1 && endIndex > index) {
+      // 将结束符号的位置作为源码最后的位置
       endIndex = index
     }
   }
 
-  __TEST__ && assert(endIndex > 0)
-
   const start = getCursor(context)
+  // 解析主要文本的内容
   const content = parseTextData(context, endIndex, mode)
 
   return {
@@ -1045,10 +913,7 @@ function parseText(context: ParserContext, mode: TextModes): TextNode {
   }
 }
 
-/**
- * Get text data with a given length from the current location.
- * This translates HTML entities in the text data.
- */
+// 从当前位置获取给定长度的文本数据并反编码
 function parseTextData(
   context: ParserContext,
   length: number,
@@ -1063,7 +928,7 @@ function parseTextData(
   ) {
     return rawText
   } else {
-    // DATA or RCDATA containing "&". Entity decoding is required.
+    // DATA 或 RCDATA 模式下包含&符号，需要反编码
     return context.options.decodeEntities(
       rawText,
       mode === TextModes.ATTRIBUTE_VALUE
@@ -1071,7 +936,9 @@ function parseTextData(
   }
 }
 
+// 获取当前行对应的位置、行数、字符位置
 function getCursor(context: ParserContext): Position {
+  // 列位置（换行后会从0开始）、行位置、字符位置（与换行无关）
   const { column, line, offset } = context
   return { column, line, offset }
 }
@@ -1083,9 +950,9 @@ function getSelection(
 ): SourceLocation {
   end = end || getCursor(context)
   return {
-    start,
-    end,
-    source: context.originalSource.slice(start.offset, end.offset)
+    start, // 起始位置
+    end, // 结束位置
+    source: context.originalSource.slice(start.offset, end.offset) // 源码
   }
 }
 
@@ -1097,10 +964,12 @@ function startsWith(source: string, searchString: string): boolean {
   return source.startsWith(searchString)
 }
 
+// context 进位
 function advanceBy(context: ParserContext, numberOfCharacters: number): void {
   const { source } = context
-  __TEST__ && assert(numberOfCharacters <= source.length)
+  // 更新编译上下文的下一次编译位置
   advancePositionWithMutation(context, source, numberOfCharacters)
+  // 将已编译的源码分割出去
   context.source = source.slice(numberOfCharacters)
 }
 
@@ -1150,7 +1019,7 @@ function isEnd(
   const s = context.source
 
   switch (mode) {
-    case TextModes.DATA:
+    case TextModes.DATA: // 该模式下，包含其他的元素、同时也会存在文本需要转义
       if (startsWith(s, '</')) {
         // TODO: probably bad performance
         for (let i = ancestors.length - 1; i >= 0; --i) {
@@ -1161,8 +1030,9 @@ function isEnd(
       }
       break
 
-    case TextModes.RCDATA:
+    case TextModes.RCDATA: // 该模式下，标签内的文本需要转义，如：textarea、title
     case TextModes.RAWTEXT: {
+      // 该模式下，标签内的文本不需要转义，如：style,iframe,script,noscript
       const parent = last(ancestors)
       if (parent && startsWithEndTagOpen(s, parent.tag)) {
         return true
@@ -1170,7 +1040,7 @@ function isEnd(
       break
     }
 
-    case TextModes.CDATA:
+    case TextModes.CDATA: // 该模式对应 XML 的 CDATA
       if (startsWith(s, ']]>')) {
         return true
       }

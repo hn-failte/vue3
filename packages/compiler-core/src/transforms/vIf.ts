@@ -56,8 +56,7 @@ export const transformIf = createStructuralDirectiveTransform(
         }
       }
 
-      // Exit callback. Complete the codegenNode when all children have been
-      // transformed.
+      // 退出回调. 当所有的子节点都已转换，会完成 codegenNode
       return () => {
         if (isRoot) {
           ifNode.codegenNode = createCodegenNodeForBranch(

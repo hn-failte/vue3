@@ -197,21 +197,11 @@ export function generate(
 ): CodegenResult {
   const context = createCodegenContext(ast, options)
   if (options.onContextCreated) options.onContextCreated(context)
-  const {
-    mode,
-    push,
-    prefixIdentifiers,
-    indent,
-    deindent,
-    newline,
-    scopeId,
-    ssr
-  } = context
+  const { mode, push, prefixIdentifiers, indent, deindent, newline } = context
 
   const helpers = Array.from(ast.helpers)
   const hasHelpers = helpers.length > 0
   const useWithBlock = !prefixIdentifiers && mode !== 'module'
-  const genScopeId = !__BROWSER__ && scopeId != null && mode === 'module'
   const isSetupInlined = !__BROWSER__ && !!options.inline
 
   // preambles
@@ -220,28 +210,8 @@ export function generate(
   const preambleContext = isSetupInlined
     ? createCodegenContext(ast, options)
     : context
-  if (!__BROWSER__ && mode === 'module') {
-    genModulePreamble(ast, preambleContext, genScopeId, isSetupInlined)
-  } else {
-    genFunctionPreamble(ast, preambleContext)
-  }
-  // enter render function
-  const functionName = ssr ? `ssrRender` : `render`
-  const args = ssr ? ['_ctx', '_push', '_parent', '_attrs'] : ['_ctx', '_cache']
-  if (!__BROWSER__ && options.bindingMetadata && !options.inline) {
-    // binding optimization args
-    args.push('$props', '$setup', '$data', '$options')
-  }
-  const signature =
-    !__BROWSER__ && options.isTS
-      ? args.map(arg => `${arg}: any`).join(',')
-      : args.join(', ')
 
-  if (isSetupInlined) {
-    push(`(${signature}) => {`)
-  } else {
-    push(`function ${functionName}(${signature}) {`)
-  }
+  genFunctionPreamble(ast, preambleContext)
   indent()
 
   if (useWithBlock) {
@@ -269,11 +239,6 @@ export function generate(
       newline()
     }
   }
-  if (__COMPAT__ && ast.filters && ast.filters.length) {
-    newline()
-    genAssets(ast.filters, 'filter', context)
-    newline()
-  }
 
   if (ast.temps > 0) {
     push(`let `)
@@ -287,9 +252,8 @@ export function generate(
   }
 
   // generate the VNode tree expression
-  if (!ssr) {
-    push(`return `)
-  }
+
+  push(`return `)
   if (ast.codegenNode) {
     genNode(ast.codegenNode, context)
   } else {
@@ -314,15 +278,7 @@ export function generate(
 }
 
 function genFunctionPreamble(ast: RootNode, context: CodegenContext) {
-  const {
-    ssr,
-    prefixIdentifiers,
-    push,
-    newline,
-    runtimeModuleName,
-    runtimeGlobalName,
-    ssrRuntimeModuleName
-  } = context
+  const { ssr, push, newline, runtimeModuleName, runtimeGlobalName } = context
   const VueBinding =
     !__BROWSER__ && ssr
       ? `require(${JSON.stringify(runtimeModuleName)})`
@@ -333,38 +289,25 @@ function genFunctionPreamble(ast: RootNode, context: CodegenContext) {
   // with block so it doesn't incur the `in` check cost for every helper access.
   const helpers = Array.from(ast.helpers)
   if (helpers.length > 0) {
-    if (!__BROWSER__ && prefixIdentifiers) {
-      push(`const { ${helpers.map(aliasHelper).join(', ')} } = ${VueBinding}\n`)
-    } else {
-      // "with" mode.
-      // save Vue in a separate variable to avoid collision
-      push(`const _Vue = ${VueBinding}\n`)
-      // in "with" mode, helpers are declared inside the with block to avoid
-      // has check cost, but hoists are lifted out of the function - we need
-      // to provide the helper here.
-      if (ast.hoists.length) {
-        const staticHelpers = [
-          CREATE_VNODE,
-          CREATE_ELEMENT_VNODE,
-          CREATE_COMMENT,
-          CREATE_TEXT,
-          CREATE_STATIC
-        ]
-          .filter(helper => helpers.includes(helper))
-          .map(aliasHelper)
-          .join(', ')
-        push(`const { ${staticHelpers} } = _Vue\n`)
-      }
-    }
-  }
-  // generate variables for ssr helpers
-  if (!__BROWSER__ && ast.ssrHelpers && ast.ssrHelpers.length) {
-    // ssr guarantees prefixIdentifier: true
-    push(
-      `const { ${ast.ssrHelpers
+    // "with" mode.
+    // save Vue in a separate variable to avoid collision
+    push(`const _Vue = ${VueBinding}\n`)
+    // in "with" mode, helpers are declared inside the with block to avoid
+    // has check cost, but hoists are lifted out of the function - we need
+    // to provide the helper here.
+    if (ast.hoists.length) {
+      const staticHelpers = [
+        CREATE_VNODE,
+        CREATE_ELEMENT_VNODE,
+        CREATE_COMMENT,
+        CREATE_TEXT,
+        CREATE_STATIC
+      ]
+        .filter(helper => helpers.includes(helper))
         .map(aliasHelper)
-        .join(', ')} } = require("${ssrRuntimeModuleName}")\n`
-    )
+        .join(', ')
+      push(`const { ${staticHelpers} } = _Vue\n`)
+    }
   }
   genHoists(ast.hoists, context)
   newline()

@@ -198,15 +198,15 @@ export interface DirectiveNode extends Node {
 }
 
 /**
- * Static types have several levels.
- * Higher levels implies lower levels. e.g. a node that can be stringified
- * can always be hoisted and skipped for patch.
+ * 静态类型级别
+ * 告级别的兼容低级别
+ * eg: a node that can be stringified can always be hoisted and skipped for patch.
  */
 export const enum ConstantTypes {
-  NOT_CONSTANT = 0,
-  CAN_SKIP_PATCH,
-  CAN_HOIST,
-  CAN_STRINGIFY
+  NOT_CONSTANT = 0, // 变量
+  CAN_SKIP_PATCH, // 可以跳过修改（setup 中的常量绑定可以跳过更新，但不能提升到模块范围）
+  CAN_HOIST, // 可以提升
+  CAN_STRINGIFY // 可以字符串化
 }
 
 export interface SimpleExpressionNode extends Node {
@@ -557,17 +557,17 @@ export function createRoot(
   loc = locStub
 ): RootNode {
   return {
-    type: NodeTypes.ROOT,
-    children,
-    helpers: new Set(),
-    components: [],
-    directives: [],
-    hoists: [],
-    imports: [],
-    cached: 0,
-    temps: 0,
+    type: NodeTypes.ROOT, // 节点类型，用于标识语法单元或操作。如: ROOT、ELEMENT、TEXT、COMMENT、SIMPLE_EXPRESSION、 INTERPOLATION等
+    children, // 子节点
+    helpers: new Set(), // 帮助函数，用于存储在转换或编译过程中生成的辅助函数
+    components: [], // 组件，用于存储当前模块所依赖或使用到的组件信息，包括组件名称、路径、导入声明等
+    directives: [], // 指令，用于存储与当前模块相关联的所有自定义指令信息，包括指令名称、参数、修饰符等
+    hoists: [], // 提升项，用于存储需要被提前计算并缓存起来以优化性能的表达式或计算结果
+    imports: [], // 导入项，用于描述当前模块所引入的外部模块，并记录其对应关系和可访问性等相关信息
+    cached: 0, // 用于缓存一次求值结果，并在后续多次使用时直接返回缓存值
+    temps: 0, // 临时变量，用于存储在生成的代码中临时使用的变量，通常是用于辅助某个功能的实现或过程的处理
     codegenNode: undefined,
-    loc
+    loc // 位置信息
   }
 }
 
@@ -822,6 +822,7 @@ export function getVNodeBlockHelper(ssr: boolean, isComponent: boolean) {
   return ssr || isComponent ? CREATE_BLOCK : CREATE_ELEMENT_BLOCK
 }
 
+// 转换成块
 export function convertToBlock(
   node: VNodeCall,
   { helper, removeHelper, inSSR }: TransformContext

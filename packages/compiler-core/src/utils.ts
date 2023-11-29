@@ -199,6 +199,7 @@ export function getInnerRange(
   return newLoc
 }
 
+// 由于解析产生变化使位置进位（不会改变原来的pos）
 export function advancePositionWithClone(
   pos: Position,
   source: string,
@@ -213,26 +214,30 @@ export function advancePositionWithClone(
 
 // advance by mutation without cloning (for performance reasons), since this
 // gets called a lot in the parser
+// 由于解析产生变化使位置进位
 export function advancePositionWithMutation(
   pos: Position,
   source: string,
   numberOfCharacters: number = source.length
 ): Position {
-  let linesCount = 0
-  let lastNewLinePos = -1
+  let linesCount = 0 // source代码存在的行数
+  let lastNewLinePos = -1 // 最后一个换行符的位置
   for (let i = 0; i < numberOfCharacters; i++) {
-    if (source.charCodeAt(i) === 10 /* newline char code */) {
+    if (source.charCodeAt(i) === 10 /* 换行符的ASCII码 */) {
       linesCount++
       lastNewLinePos = i
     }
   }
 
+  // 更新位置
   pos.offset += numberOfCharacters
+  // 更新当前行的位置
   pos.line += linesCount
+  // 更新当前列的位置
   pos.column =
     lastNewLinePos === -1
-      ? pos.column + numberOfCharacters
-      : numberOfCharacters - lastNewLinePos
+      ? pos.column + numberOfCharacters // 只有一行，则直接加上字符串的长度
+      : numberOfCharacters - lastNewLinePos // 存在多行，则用字符串的长度减去最后一行相对字符串长度的位置
 
   return pos
 }
@@ -244,6 +249,9 @@ export function assert(condition: boolean, msg?: string) {
   }
 }
 
+/**
+ * 查找 node 下的 props 中是否存在属性为 name 字符串或匹配规则满足 name 正则的属性
+ **/
 export function findDir(
   node: ElementNode,
   name: string | RegExp,

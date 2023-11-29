@@ -31,8 +31,7 @@ export function hoistStatic(root: RootNode, context: TransformContext) {
   walk(
     root,
     context,
-    // Root node is unfortunately non-hoistable due to potential parent
-    // fallthrough attributes.
+    // 根节点不能做提升
     isSingleElementRoot(root, root.children[0])
   )
 }
@@ -60,7 +59,7 @@ function walk(
 
   for (let i = 0; i < children.length; i++) {
     const child = children[i]
-    // only plain elements & text calls are eligible for hoisting.
+    // 只有纯元素和文本才能做提升
     if (
       child.type === NodeTypes.ELEMENT &&
       child.tagType === ElementTypes.ELEMENT
@@ -68,17 +67,14 @@ function walk(
       const constantType = doNotHoistNode
         ? ConstantTypes.NOT_CONSTANT
         : getConstantType(child, context)
-      if (constantType > ConstantTypes.NOT_CONSTANT) {
-        if (constantType >= ConstantTypes.CAN_HOIST) {
-          ;(child.codegenNode as VNodeCall).patchFlag =
-            PatchFlags.HOISTED + (__DEV__ ? ` /* HOISTED */` : ``)
-          child.codegenNode = context.hoist(child.codegenNode!)
-          hoistedCount++
-          continue
-        }
+      // 如果不是变量
+      if (constantType >= ConstantTypes.CAN_HOIST) {
+        child.codegenNode.patchFlag = PatchFlags.HOISTED + ''
+        child.codegenNode = context.hoist(child.codegenNode!)
+        hoistedCount++
+        continue
       } else {
-        // node may contain dynamic children, but its props may be eligible for
-        // hoisting.
+        // 节点可能包含动态子节点，但其 props 可能适合提升。
         const codegenNode = child.codegenNode!
         if (codegenNode.type === NodeTypes.VNODE_CALL) {
           const flag = getPatchFlag(codegenNode)

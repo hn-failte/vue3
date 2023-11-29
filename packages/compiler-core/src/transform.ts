@@ -318,15 +318,17 @@ export function createTransformContext(
 }
 
 export function transform(root: RootNode, options: TransformOptions) {
+  // 将所有属性挂载到 context 上
   const context = createTransformContext(root, options)
+  // 遍历所有节点
   traverseNode(root, context)
+  // 静态提升
   if (options.hoistStatic) {
     hoistStatic(root, context)
   }
-  if (!options.ssr) {
-    createRootCodegen(root, context)
-  }
-  // finalize meta information
+  // 创建根节点代码生成调用
+  createRootCodegen(root, context)
+  // 最后确定的信息
   root.helpers = new Set([...context.helpers.keys()])
   root.components = [...context.components]
   root.directives = [...context.directives]
@@ -334,62 +336,48 @@ export function transform(root: RootNode, options: TransformOptions) {
   root.hoists = context.hoists
   root.temps = context.temps
   root.cached = context.cached
-
-  if (__COMPAT__) {
-    root.filters = [...context.filters!]
-  }
 }
 
+// 创建根节点代码生成调用
 function createRootCodegen(root: RootNode, context: TransformContext) {
   const { helper } = context
   const { children } = root
   if (children.length === 1) {
     const child = children[0]
-    // if the single child is an element, turn it into a block.
+    // 如果children只有一个节点，且是一个元素，则直接转换成一个块
     if (isSingleElementRoot(root, child) && child.codegenNode) {
-      // single element root is never hoisted so codegenNode will never be
-      // SimpleExpressionNode
+      // 单个元素节点不会做提升，所以代码生成节点不会是一个 SimpleExpressionNode
       const codegenNode = child.codegenNode
       if (codegenNode.type === NodeTypes.VNODE_CALL) {
         convertToBlock(codegenNode, context)
       }
       root.codegenNode = codegenNode
     } else {
-      // - single <slot/>, IfNode, ForNode: already blocks.
-      // - single text node: always patched.
-      // root codegen falls through via genNode()
+      // 单个 <slot/>, If节点, For节点: 已经是块了
+      // 单个文本节点总是已修订状态
       root.codegenNode = child
     }
   } else if (children.length > 1) {
-    // root has multiple nodes - return a fragment block.
+    // 根节点有多个子节点 - 返回一个fragment block.
     let patchFlag = PatchFlags.STABLE_FRAGMENT
-    let patchFlagText = PatchFlagNames[PatchFlags.STABLE_FRAGMENT]
-    // check if the fragment actually contains a single valid child with
-    // the rest being comments
-    if (
-      __DEV__ &&
-      children.filter(c => c.type !== NodeTypes.COMMENT).length === 1
-    ) {
-      patchFlag |= PatchFlags.DEV_ROOT_FRAGMENT
-      patchFlagText += `, ${PatchFlagNames[PatchFlags.DEV_ROOT_FRAGMENT]}`
-    }
+    // codegenNode 为代码生成准备的
+    // 将调用挂载在节点的codegenNode上
     root.codegenNode = createVNodeCall(
       context,
       helper(FRAGMENT),
       undefined,
       root.children,
-      patchFlag + (__DEV__ ? ` /* ${patchFlagText} */` : ``),
+      patchFlag + '',
       undefined,
       undefined,
       true,
       undefined,
       false /* isComponent */
     )
-  } else {
-    // no children = noop. codegen will return null.
   }
 }
 
+// 遍历多个子节点
 export function traverseChildren(
   parent: ParentNode,
   context: TransformContext
@@ -408,15 +396,18 @@ export function traverseChildren(
   }
 }
 
+// 遍历单个节点
 export function traverseNode(
   node: RootNode | TemplateChildNode,
   context: TransformContext
 ) {
   context.currentNode = node
-  // apply transform plugins
+  // 应用节点转换插件
   const { nodeTransforms } = context
+  // 退出函数
   const exitFns = []
   for (let i = 0; i < nodeTransforms.length; i++) {
+    // 执行转换，并拿到退出函数
     const onExit = nodeTransforms[i](node, context)
     if (onExit) {
       if (isArray(onExit)) {
@@ -425,37 +416,27 @@ export function traverseNode(
         exitFns.push(onExit)
       }
     }
-    if (!context.currentNode) {
-      // node was removed
-      return
-    } else {
-      // node may have been replaced
-      node = context.currentNode
-    }
   }
 
   switch (node.type) {
     case NodeTypes.COMMENT:
-      if (!context.ssr) {
-        // inject import for the Comment symbol, which is needed for creating
-        // comment nodes with `createVNode`
-        context.helper(CREATE_COMMENT)
-      }
+      context.helper(CREATE_COMMENT)
       break
     case NodeTypes.INTERPOLATION:
-      // no need to traverse, but we need to inject toString helper
-      if (!context.ssr) {
-        context.helper(TO_DISPLAY_STRING)
-      }
+      // 不需要遍历, 但是需要注入 toString 的帮助函数
+      // 插值节点在后续生成 render 代码的时候可以使用帮助函数获取变量的值
+      context.helper(TO_DISPLAY_STRING)
       break
 
-    // for container types, further traverse downwards
+    // 对于容器类型的节点, 需要进一步向下遍历
+    // 子类只有一个的节点
     case NodeTypes.IF:
       for (let i = 0; i < node.branches.length; i++) {
         traverseNode(node.branches[i], context)
       }
       break
-    case NodeTypes.IF_BRANCH:
+    // 子类有多个的节点
+    case NodeTypes.IF_BRANCH: // if else-if else
     case NodeTypes.FOR:
     case NodeTypes.ELEMENT:
     case NodeTypes.ROOT:
@@ -463,7 +444,7 @@ export function traverseNode(
       break
   }
 
-  // exit transforms
+  // 退出转换
   context.currentNode = node
   let i = exitFns.length
   while (i--) {

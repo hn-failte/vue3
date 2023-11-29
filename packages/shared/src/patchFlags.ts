@@ -41,30 +41,27 @@ export const enum PatchFlags {
   STYLE = 1 << 2,
 
   /**
-   * Indicates an element that has non-class/style dynamic props.
-   * Can also be on a component that has any dynamic props (includes
-   * class/style). when this flag is present, the vnode also has a dynamicProps
-   * array that contains the keys of the props that may change so the runtime
-   * can diff them faster (without having to worry about removed props)
+   * 指具有非类/样式动态道具的元素
+   * 也可以位于具有任何动态props（包括class/style）的组件上。
+   * 当此标志存在时，vnode 还有一个 dynamicProps 数组，其中包含可能更改的 props 的key，以便运行时可以更快地比较它们（不必担心已删除的 props）
    */
   PROPS = 1 << 3,
 
   /**
-   * Indicates an element with props with dynamic keys. When keys change, a full
-   * diff is always needed to remove the old key. This flag is mutually
-   * exclusive with CLASS, STYLE and PROPS.
+   * 表示带有带有动态键的 props 的元素。
+   * 当key改变时，始终需要完整的 diff 来删除旧key。
+   * 该标志与 CLASS、STYLE 和 PROPS 互斥。
    */
   FULL_PROPS = 1 << 4,
 
   /**
-   * Indicates an element that requires props hydration
-   * (but not necessarily patching)
+   * 表示需要props作用的元素
    * e.g. event listeners & v-bind with prop modifier
    */
   NEED_HYDRATION = 1 << 5,
 
   /**
-   * Indicates a fragment whose children order doesn't change.
+   * 子级顺序不变的片段
    */
   STABLE_FRAGMENT = 1 << 6,
 
