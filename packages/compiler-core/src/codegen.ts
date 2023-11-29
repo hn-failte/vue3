@@ -195,51 +195,41 @@ export function generate(
     onContextCreated?: (context: CodegenContext) => void
   } = {}
 ): CodegenResult {
+  // 创建代码生成context
   const context = createCodegenContext(ast, options)
-  if (options.onContextCreated) options.onContextCreated(context)
-  const { mode, push, prefixIdentifiers, indent, deindent, newline } = context
+  const { mode, push, indent, deindent, newline } = context
 
-  const helpers = Array.from(ast.helpers)
-  const hasHelpers = helpers.length > 0
-  const useWithBlock = !prefixIdentifiers && mode !== 'module'
-  const isSetupInlined = !__BROWSER__ && !!options.inline
+  const preambleContext = context
+  if (mode === 'module') {
+    // 生成模块序文
+    genModulePreamble(ast, preambleContext, false, false)
+  } else {
+    // 生成函数序文
+    genFunctionPreamble(ast, preambleContext)
+  }
+  // 进入渲染函数
+  const functionName = 'render'
+  const args = ['_ctx', '_cache']
+  const signature = args.join(', ')
 
-  // preambles
-  // in setup() inline mode, the preamble is generated in a sub context
-  // and returned separately.
-  const preambleContext = isSetupInlined
-    ? createCodegenContext(ast, options)
-    : context
-
-  genFunctionPreamble(ast, preambleContext)
+  push(`function ${functionName}(${signature}) {`)
   indent()
 
-  if (useWithBlock) {
-    push(`with (_ctx) {`)
-    indent()
-    // function mode const declarations should be inside with block
-    // also they should be renamed to avoid collision with user properties
-    if (hasHelpers) {
-      push(`const { ${helpers.map(aliasHelper).join(', ')} } = _Vue`)
-      push(`\n`)
-      newline()
-    }
-  }
-
-  // generate asset resolution statements
+  // 生成组件资源声明
   if (ast.components.length) {
     genAssets(ast.components, 'component', context)
     if (ast.directives.length || ast.temps > 0) {
       newline()
     }
   }
+  // 生成指令资源声明
   if (ast.directives.length) {
     genAssets(ast.directives, 'directive', context)
     if (ast.temps > 0) {
       newline()
     }
   }
-
+  // 临时变量导入
   if (ast.temps > 0) {
     push(`let `)
     for (let i = 0; i < ast.temps; i++) {
@@ -251,18 +241,12 @@ export function generate(
     newline()
   }
 
-  // generate the VNode tree expression
-
+  // 生成 VNode 树表达式
   push(`return `)
   if (ast.codegenNode) {
     genNode(ast.codegenNode, context)
   } else {
     push(`null`)
-  }
-
-  if (useWithBlock) {
-    deindent()
-    push(`}`)
   }
 
   deindent()
@@ -271,44 +255,53 @@ export function generate(
   return {
     ast,
     code: context.code,
-    preamble: isSetupInlined ? preambleContext.code : ``,
-    // SourceMapGenerator does have toJSON() method but it's not in the types
+    preamble: '',
     map: context.map ? (context.map as any).toJSON() : undefined
   }
 }
 
 function genFunctionPreamble(ast: RootNode, context: CodegenContext) {
-  const { ssr, push, newline, runtimeModuleName, runtimeGlobalName } = context
+  const {
+    ssr,
+    prefixIdentifiers,
+    push,
+    newline,
+    runtimeModuleName,
+    runtimeGlobalName
+  } = context
   const VueBinding =
     !__BROWSER__ && ssr
-      ? `require(${JSON.stringify(runtimeModuleName)})`
-      : runtimeGlobalName
-  // Generate const declaration for helpers
-  // In prefix mode, we place the const declaration at top so it's done
-  // only once; But if we not prefixing, we place the declaration inside the
-  // with block so it doesn't incur the `in` check cost for every helper access.
+      ? `require(${JSON.stringify(runtimeModuleName)})` // 相当于require("vue")
+      : runtimeGlobalName // 这里指 Vue
+  // 根据帮助函数生成 const 声明
+  // 在 prefix 模式下, 在顶部替换了 const 声明，所以只要一次就能完成。
+  // 但是如果没有 prefix，会把声明置入了块内部，所以它不会因为帮助函数访问引起 in 的检查消耗。
   const helpers = Array.from(ast.helpers)
   if (helpers.length > 0) {
-    // "with" mode.
-    // save Vue in a separate variable to avoid collision
-    push(`const _Vue = ${VueBinding}\n`)
-    // in "with" mode, helpers are declared inside the with block to avoid
-    // has check cost, but hoists are lifted out of the function - we need
-    // to provide the helper here.
-    if (ast.hoists.length) {
-      const staticHelpers = [
-        CREATE_VNODE,
-        CREATE_ELEMENT_VNODE,
-        CREATE_COMMENT,
-        CREATE_TEXT,
-        CREATE_STATIC
-      ]
-        .filter(helper => helpers.includes(helper))
-        .map(aliasHelper)
-        .join(', ')
-      push(`const { ${staticHelpers} } = _Vue\n`)
+    if (!__BROWSER__ && prefixIdentifiers) {
+      // 诸如： const { xxx: _yyy } = _Vue\n
+      push(`const { ${helpers.map(aliasHelper).join(', ')} } = ${VueBinding}\n`)
+    } else {
+      // with 模式.
+      // 将Vue保存在单独的变量中以避免冲突
+      push(`const _Vue = ${VueBinding}\n`) // const _Vue = Vue
+      // 在“with”模式中，帮助函数被声明在with块内，以避免检查成本，但变量提升时被提出了函数，此时需要用到帮助函数。
+      if (ast.hoists.length) {
+        const staticHelpers = [
+          CREATE_VNODE,
+          CREATE_ELEMENT_VNODE,
+          CREATE_COMMENT,
+          CREATE_TEXT,
+          CREATE_STATIC
+        ]
+          .filter(helper => helpers.includes(helper))
+          .map(aliasHelper)
+          .join(', ')
+        push(`const { ${staticHelpers} } = _Vue\n`)
+      }
     }
   }
+  // 生成变量提升
   genHoists(ast.hoists, context)
   newline()
   push(`return `)
@@ -320,60 +313,30 @@ function genModulePreamble(
   genScopeId: boolean,
   inline?: boolean
 ) {
-  const {
-    push,
-    newline,
-    optimizeImports,
-    runtimeModuleName,
-    ssrRuntimeModuleName
-  } = context
+  const { push, newline, runtimeModuleName } = context
 
   if (genScopeId && ast.hoists.length) {
     ast.helpers.add(PUSH_SCOPE_ID)
     ast.helpers.add(POP_SCOPE_ID)
   }
 
-  // generate import statements for helpers
+  // 根据帮助函数生成导入声明
   if (ast.helpers.size) {
     const helpers = Array.from(ast.helpers)
-    if (optimizeImports) {
-      // when bundled with webpack with code-split, calling an import binding
-      // as a function leads to it being wrapped with `Object(a.b)` or `(0,a.b)`,
-      // incurring both payload size increase and potential perf overhead.
-      // therefore we assign the imports to variables (which is a constant ~50b
-      // cost per-component instead of scaling with template size)
-      push(
-        `import { ${helpers
-          .map(s => helperNameMap[s])
-          .join(', ')} } from ${JSON.stringify(runtimeModuleName)}\n`
-      )
-      push(
-        `\n// Binding optimization for webpack code-split\nconst ${helpers
-          .map(s => `_${helperNameMap[s]} = ${helperNameMap[s]}`)
-          .join(', ')}\n`
-      )
-    } else {
-      push(
-        `import { ${helpers
-          .map(s => `${helperNameMap[s]} as _${helperNameMap[s]}`)
-          .join(', ')} } from ${JSON.stringify(runtimeModuleName)}\n`
-      )
-    }
-  }
-
-  if (ast.ssrHelpers && ast.ssrHelpers.length) {
     push(
-      `import { ${ast.ssrHelpers
+      `import { ${helpers
         .map(s => `${helperNameMap[s]} as _${helperNameMap[s]}`)
-        .join(', ')} } from "${ssrRuntimeModuleName}"\n`
+        .join(', ')} } from ${JSON.stringify(runtimeModuleName)}\n`
     )
   }
 
   if (ast.imports.length) {
+    // 生成外部依赖模块导入
     genImports(ast.imports, context)
     newline()
   }
 
+  // 生成变量提升
   genHoists(ast.hoists, context)
   newline()
 
@@ -382,17 +345,14 @@ function genModulePreamble(
   }
 }
 
+// 生成资源解析声明
 function genAssets(
   assets: string[],
   type: 'component' | 'directive' | 'filter',
   { helper, push, newline, isTS }: CodegenContext
 ) {
   const resolver = helper(
-    __COMPAT__ && type === 'filter'
-      ? RESOLVE_FILTER
-      : type === 'component'
-        ? RESOLVE_COMPONENT
-        : RESOLVE_DIRECTIVE
+    type === 'component' ? RESOLVE_COMPONENT : RESOLVE_DIRECTIVE
   )
   for (let i = 0; i < assets.length; i++) {
     let id = assets[i]
@@ -527,12 +487,6 @@ function genNode(node: CodegenNode | symbol | string, context: CodegenContext) {
     case NodeTypes.ELEMENT:
     case NodeTypes.IF:
     case NodeTypes.FOR:
-      __DEV__ &&
-        assert(
-          node.codegenNode != null,
-          `Codegen node is missing for element/if/for node. ` +
-            `Apply appropriate transforms first.`
-        )
       genNode(node.codegenNode!, context)
       break
     case NodeTypes.TEXT:

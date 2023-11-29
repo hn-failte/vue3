@@ -469,11 +469,6 @@ function createBaseVNode(
       : ShapeFlags.ARRAY_CHILDREN
   }
 
-  // validate key
-  if (__DEV__ && vnode.key !== vnode.key) {
-    warn(`VNode created with invalid key (NaN). VNode type:`, vnode.type)
-  }
-
   // track vnode for block tree
   if (
     isBlockTreeEnabled > 0 &&
@@ -581,18 +576,6 @@ function _createVNode(
           : isFunction(type)
             ? ShapeFlags.FUNCTIONAL_COMPONENT
             : 0
-
-  if (__DEV__ && shapeFlag & ShapeFlags.STATEFUL_COMPONENT && isProxy(type)) {
-    type = toRaw(type)
-    warn(
-      `Vue received a Component that was made a reactive object. This can ` +
-        `lead to unnecessary performance overhead and should be avoided by ` +
-        `marking the component with \`markRaw\` or using \`shallowRef\` ` +
-        `instead of \`ref\`.`,
-      `\nComponent that was made reactive: `,
-      type
-    )
-  }
 
   return createBaseVNode(
     type,
