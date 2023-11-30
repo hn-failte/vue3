@@ -101,32 +101,18 @@ function resolveAsset(
     }
 
     const res =
-      // local registration
-      // check instance[type] first which is resolved for options API
+      // 局部注册
+      // 先检查被 options API 引入的 instance[type]
       resolve(instance[type] || (Component as ComponentOptions)[type], name) ||
-      // global registration
+      // 全局注册
       resolve(instance.appContext[type], name)
 
     if (!res && maybeSelfReference) {
-      // fallback to implicit self-reference
+      // 回退到隐式自引用
       return Component
     }
 
-    if (__DEV__ && warnMissing && !res) {
-      const extra =
-        type === COMPONENTS
-          ? `\nIf this is a native custom element, make sure to exclude it from ` +
-            `component resolution via compilerOptions.isCustomElement.`
-          : ``
-      warn(`Failed to resolve ${type.slice(0, -1)}: ${name}${extra}`)
-    }
-
     return res
-  } else if (__DEV__) {
-    warn(
-      `resolve${capitalize(type.slice(0, -1))} ` +
-        `can only be used in render() or setup().`
-    )
   }
 }
 

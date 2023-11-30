@@ -70,18 +70,16 @@ import {
 // import, which should be used instead of a resolveDirective call.
 const directiveImportMap = new WeakMap<DirectiveNode, symbol>()
 
-// generate a JavaScript AST for this element's codegen
+// 为元素的 codegen 生成一个 AST
 export const transformElement: NodeTransform = (node, context) => {
-  // perform the work on exit, after all child expressions have been
-  // processed and merged.
+  // 处理并合并所有子表达式后，在退出时执行
   return function postTransformElement() {
     node = context.currentNode!
 
     const { tag, props } = node
     const isComponent = node.tagType === ElementTypes.COMPONENT
 
-    // The goal of the transform is to create a codegenNode implementing the
-    // VNodeCall interface.
+    // 转换目标是创建一个继承了VNodeCall的codegenNode
     let vnodeTag = isComponent
       ? resolveComponentType(node as ComponentNode, context)
       : `"${tag}"`
@@ -197,23 +195,7 @@ export const transformElement: NodeTransform = (node, context) => {
 
     // patchFlag & dynamicPropNames
     if (patchFlag !== 0) {
-      if (__DEV__) {
-        if (patchFlag < 0) {
-          // special flags (negative and mutually exclusive)
-          vnodePatchFlag =
-            patchFlag + ` /* ${PatchFlagNames[patchFlag as PatchFlags]} */`
-        } else {
-          // bitwise flags
-          const flagNames = Object.keys(PatchFlagNames)
-            .map(Number)
-            .filter(n => n > 0 && patchFlag & n)
-            .map(n => PatchFlagNames[n as PatchFlags])
-            .join(`, `)
-          vnodePatchFlag = patchFlag + ` /* ${flagNames} */`
-        }
-      } else {
-        vnodePatchFlag = String(patchFlag)
-      }
+      vnodePatchFlag = String(patchFlag)
       if (dynamicPropNames && dynamicPropNames.length) {
         vnodeDynamicProps = stringifyDynamicPropNames(dynamicPropNames)
       }
@@ -602,49 +584,6 @@ export function buildProps(
           if (isVBind) {
             // have to merge early for compat build check
             pushMergeArg()
-            if (__COMPAT__) {
-              // 2.x v-bind object order compat
-              if (__DEV__) {
-                const hasOverridableKeys = mergeArgs.some(arg => {
-                  if (arg.type === NodeTypes.JS_OBJECT_EXPRESSION) {
-                    return arg.properties.some(({ key }) => {
-                      if (
-                        key.type !== NodeTypes.SIMPLE_EXPRESSION ||
-                        !key.isStatic
-                      ) {
-                        return true
-                      }
-                      return (
-                        key.content !== 'class' &&
-                        key.content !== 'style' &&
-                        !isOn(key.content)
-                      )
-                    })
-                  } else {
-                    // dynamic expression
-                    return true
-                  }
-                })
-                if (hasOverridableKeys) {
-                  checkCompatEnabled(
-                    CompilerDeprecationTypes.COMPILER_V_BIND_OBJECT_ORDER,
-                    context,
-                    loc
-                  )
-                }
-              }
-
-              if (
-                isCompatEnabled(
-                  CompilerDeprecationTypes.COMPILER_V_BIND_OBJECT_ORDER,
-                  context
-                )
-              ) {
-                mergeArgs.unshift(exp)
-                continue
-              }
-            }
-
             mergeArgs.push(exp)
           } else {
             // v-on="obj" -> toHandlers(obj)
@@ -673,6 +612,7 @@ export function buildProps(
         patchFlag |= PatchFlags.NEED_HYDRATION
       }
 
+      // 对指令的处理
       const directiveTransform = context.directiveTransforms[name]
       if (directiveTransform) {
         // has built-in directive transform.

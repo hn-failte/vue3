@@ -202,7 +202,7 @@ export function generate(
   const preambleContext = context
   if (mode === 'module') {
     // 生成模块序文
-    genModulePreamble(ast, preambleContext, false, false)
+    genModulePreamble(ast, preambleContext)
   } else {
     // 生成函数序文
     genFunctionPreamble(ast, preambleContext)
@@ -231,6 +231,7 @@ export function generate(
   }
   // 临时变量导入
   if (ast.temps > 0) {
+    // let _temp0, templ
     push(`let `)
     for (let i = 0; i < ast.temps; i++) {
       push(`${i > 0 ? `, ` : ``}_temp${i}`)
@@ -285,7 +286,7 @@ function genFunctionPreamble(ast: RootNode, context: CodegenContext) {
       // with 模式.
       // 将Vue保存在单独的变量中以避免冲突
       push(`const _Vue = ${VueBinding}\n`) // const _Vue = Vue
-      // 在“with”模式中，帮助函数被声明在with块内，以避免检查成本，但变量提升时被提出了函数，此时需要用到帮助函数。
+      // 在“with”模式中，帮助函数被声明在with块内，以避免检查成本，但静态提升时被提出了函数，此时需要用到帮助函数。
       if (ast.hoists.length) {
         const staticHelpers = [
           CREATE_VNODE,
@@ -301,21 +302,16 @@ function genFunctionPreamble(ast: RootNode, context: CodegenContext) {
       }
     }
   }
-  // 生成变量提升
+  // 生成静态提升
   genHoists(ast.hoists, context)
   newline()
   push(`return `)
 }
 
-function genModulePreamble(
-  ast: RootNode,
-  context: CodegenContext,
-  genScopeId: boolean,
-  inline?: boolean
-) {
+function genModulePreamble(ast: RootNode, context: CodegenContext) {
   const { push, newline, runtimeModuleName } = context
 
-  if (genScopeId && ast.hoists.length) {
+  if (ast.hoists.length) {
     ast.helpers.add(PUSH_SCOPE_ID)
     ast.helpers.add(POP_SCOPE_ID)
   }
@@ -323,6 +319,7 @@ function genModulePreamble(
   // 根据帮助函数生成导入声明
   if (ast.helpers.size) {
     const helpers = Array.from(ast.helpers)
+    // import { xxx } from "vue"
     push(
       `import { ${helpers
         .map(s => `${helperNameMap[s]} as _${helperNameMap[s]}`)
@@ -336,13 +333,11 @@ function genModulePreamble(
     newline()
   }
 
-  // 生成变量提升
+  // 生成静态提升
   genHoists(ast.hoists, context)
   newline()
 
-  if (!inline) {
-    push(`export `)
-  }
+  push(`export `)
 }
 
 // 生成资源解析声明
@@ -351,20 +346,18 @@ function genAssets(
   type: 'component' | 'directive' | 'filter',
   { helper, push, newline, isTS }: CodegenContext
 ) {
+  // 通过帮助函数生成了引入函数
   const resolver = helper(
     type === 'component' ? RESOLVE_COMPONENT : RESOLVE_DIRECTIVE
   )
   for (let i = 0; i < assets.length; i++) {
     let id = assets[i]
-    // potential component implicit self-reference inferred from SFC filename
-    const maybeSelfReference = id.endsWith('__self')
-    if (maybeSelfReference) {
-      id = id.slice(0, -6)
-    }
+    // 生成引入声明
+    // const xxx = components[id] / directive[id]
     push(
-      `const ${toValidAssetId(id, type)} = ${resolver}(${JSON.stringify(id)}${
-        maybeSelfReference ? `, true` : ``
-      })${isTS ? `!` : ``}`
+      `const ${toValidAssetId(id, type)} = ${resolver}(${JSON.stringify(id)})${
+        isTS ? `!` : ``
+      }`
     )
     if (i < assets.length - 1) {
       newline()
@@ -383,6 +376,19 @@ function genHoists(hoists: (JSChildNode | null)[], context: CodegenContext) {
 
   // generate inlined withScopeId helper
   if (genScopeId) {
+    /*
+      // n 是函数
+      `const _withScopeId = n => (
+        function pushScopeId(id: string | null) {
+          currentScopeId = id
+        }("${scopeId}"),
+        n=n(),
+        function popScopeId() {
+          currentScopeId = null
+        }(),
+        n
+      )`
+    */
     push(
       `const _withScopeId = n => (${helper(
         PUSH_SCOPE_ID
@@ -395,11 +401,13 @@ function genHoists(hoists: (JSChildNode | null)[], context: CodegenContext) {
     const exp = hoists[i]
     if (exp) {
       const needScopeIdWrapper = genScopeId && exp.type === NodeTypes.VNODE_CALL
+      // const _hoisted_xxx =
       push(
         `const _hoisted_${i + 1} = ${
           needScopeIdWrapper ? `${PURE_ANNOTATION} _withScopeId(() => ` : ``
         }`
       )
+      // 具体节点或值
       genNode(exp, context)
       if (needScopeIdWrapper) {
         push(`)`)
@@ -475,92 +483,70 @@ function genNodeList(
 }
 
 function genNode(node: CodegenNode | symbol | string, context: CodegenContext) {
+  // 纯字符串
   if (isString(node)) {
     context.push(node)
     return
   }
+  // symbol，通过帮助函数进行渲染
   if (isSymbol(node)) {
     context.push(context.helper(node))
     return
   }
   switch (node.type) {
-    case NodeTypes.ELEMENT:
-    case NodeTypes.IF:
+    // 如果是容器节点，则再次调用genNode
+    case NodeTypes.ELEMENT: // children
+    case NodeTypes.IF: // 包含 v-if、v-else-if 与 v-else
     case NodeTypes.FOR:
       genNode(node.codegenNode!, context)
       break
-    case NodeTypes.TEXT:
+    case NodeTypes.TEXT: // 文本节点
       genText(node, context)
       break
-    case NodeTypes.SIMPLE_EXPRESSION:
+    case NodeTypes.SIMPLE_EXPRESSION: // 表达式节点
       genExpression(node, context)
       break
-    case NodeTypes.INTERPOLATION:
+    case NodeTypes.INTERPOLATION: // 插值节点
       genInterpolation(node, context)
       break
     case NodeTypes.TEXT_CALL:
       genNode(node.codegenNode, context)
       break
-    case NodeTypes.COMPOUND_EXPRESSION:
+    case NodeTypes.COMPOUND_EXPRESSION: // 复合表达式节点
       genCompoundExpression(node, context)
       break
-    case NodeTypes.COMMENT:
+    case NodeTypes.COMMENT: // 注释节点
       genComment(node, context)
       break
-    case NodeTypes.VNODE_CALL:
+    case NodeTypes.VNODE_CALL: // 单个节点
       genVNodeCall(node, context)
       break
 
-    case NodeTypes.JS_CALL_EXPRESSION:
+    case NodeTypes.JS_CALL_EXPRESSION: // js调用表达式
       genCallExpression(node, context)
       break
-    case NodeTypes.JS_OBJECT_EXPRESSION:
+    case NodeTypes.JS_OBJECT_EXPRESSION: // js对象表达式
       genObjectExpression(node, context)
       break
-    case NodeTypes.JS_ARRAY_EXPRESSION:
+    case NodeTypes.JS_ARRAY_EXPRESSION: // js数组表达式
       genArrayExpression(node, context)
       break
-    case NodeTypes.JS_FUNCTION_EXPRESSION:
+    case NodeTypes.JS_FUNCTION_EXPRESSION: // js函数表达式
       genFunctionExpression(node, context)
       break
-    case NodeTypes.JS_CONDITIONAL_EXPRESSION:
+    case NodeTypes.JS_CONDITIONAL_EXPRESSION: // js条件表达式
       genConditionalExpression(node, context)
       break
-    case NodeTypes.JS_CACHE_EXPRESSION:
+    case NodeTypes.JS_CACHE_EXPRESSION: // js缓存表达式
       genCacheExpression(node, context)
       break
-    case NodeTypes.JS_BLOCK_STATEMENT:
+    case NodeTypes.JS_BLOCK_STATEMENT: // js块声明
       genNodeList(node.body, context, true, false)
       break
 
-    // SSR only types
-    case NodeTypes.JS_TEMPLATE_LITERAL:
-      !__BROWSER__ && genTemplateLiteral(node, context)
-      break
-    case NodeTypes.JS_IF_STATEMENT:
-      !__BROWSER__ && genIfStatement(node, context)
-      break
-    case NodeTypes.JS_ASSIGNMENT_EXPRESSION:
-      !__BROWSER__ && genAssignmentExpression(node, context)
-      break
-    case NodeTypes.JS_SEQUENCE_EXPRESSION:
-      !__BROWSER__ && genSequenceExpression(node, context)
-      break
-    case NodeTypes.JS_RETURN_STATEMENT:
-      !__BROWSER__ && genReturnStatement(node, context)
-      break
-
-    /* istanbul ignore next */
     case NodeTypes.IF_BRANCH:
-      // noop
       break
     default:
-      if (__DEV__) {
-        assert(false, `unhandled codegen node type: ${(node as any).type}`)
-        // make sure we exhaust all possible types
-        const exhaustiveCheck: never = node
-        return exhaustiveCheck
-      }
   }
 }
 
@@ -640,18 +626,23 @@ function genVNodeCall(node: VNodeCall, context: CodegenContext) {
     isComponent
   } = node
   if (directives) {
+    // 使用帮助函数生成添加指令函数
     push(helper(WITH_DIRECTIVES) + `(`)
   }
   if (isBlock) {
+    // 帮助函数 OPEN_BLOCK 作用是会创建一个空数组，把后面的节点添加进来
     push(`(${helper(OPEN_BLOCK)}(${disableTracking ? `true` : ``}), `)
   }
   if (pure) {
     push(PURE_ANNOTATION)
   }
+  // 创建 VNode 的调用
   const callHelper: symbol = isBlock
     ? getVNodeBlockHelper(context.inSSR, isComponent)
     : getVNodeHelper(context.inSSR, isComponent)
+  // 这里的 node 对应 setupBlock 的第一个参数
   push(helper(callHelper) + `(`, node)
+  // 生成子节点
   genNodeList(
     genNullableArgs([tag, props, children, patchFlag, dynamicProps]),
     context
@@ -660,6 +651,7 @@ function genVNodeCall(node: VNodeCall, context: CodegenContext) {
   if (isBlock) {
     push(`)`)
   }
+  // 生成指令节点
   if (directives) {
     push(`, `)
     genNode(directives, context)

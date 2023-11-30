@@ -455,12 +455,13 @@ function hasProp(prop: Property, props: ObjectExpression) {
   return result
 }
 
+// assetId 规范化
 export function toValidAssetId(
   name: string,
   type: 'component' | 'directive' | 'filter'
 ): string {
-  // see issue#4422, we need adding identifier on validAssetId if variable `name` has specific character
   return `_${type}_${name.replace(/[^\w]/g, (searchValue, replaceValue) => {
+    // 把特殊符号都转换成合法的内容，'-'转换为'_'，其他的转换为 ASCII 码
     return searchValue === '-' ? '_' : name.charCodeAt(replaceValue).toString()
   })}`
 }

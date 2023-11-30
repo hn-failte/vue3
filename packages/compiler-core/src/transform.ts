@@ -429,14 +429,14 @@ export function traverseNode(
       break
 
     // 对于容器类型的节点, 需要进一步向下遍历
-    // 子类只有一个的节点
+    // IF 节点的子类放在 branches 中，单独处理
     case NodeTypes.IF:
       for (let i = 0; i < node.branches.length; i++) {
         traverseNode(node.branches[i], context)
       }
       break
-    // 子类有多个的节点
-    case NodeTypes.IF_BRANCH: // if else-if else
+    // 其他节点的子类放在 children 中
+    case NodeTypes.IF_BRANCH: // else-if else
     case NodeTypes.FOR:
     case NodeTypes.ELEMENT:
     case NodeTypes.ROOT:
