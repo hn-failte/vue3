@@ -111,6 +111,7 @@ export const stringifyStatic: HoistTransform = (children, context, parent) => {
     return 0
   }
 
+  // 把所有节点生成为提升节点
   let i = 0
   for (; i < children.length; i++) {
     const child = children[i]
@@ -140,6 +141,7 @@ export const stringifyStatic: HoistTransform = (children, context, parent) => {
   stringifyCurrentChunk(i)
 }
 
+// 获取已经提升的节点
 const getHoistedNode = (node: TemplateChildNode) =>
   ((node.type === NodeTypes.ELEMENT && node.tagType === ElementTypes.ELEMENT) ||
     node.type == NodeTypes.TEXT_CALL) &&

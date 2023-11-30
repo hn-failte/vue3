@@ -199,8 +199,8 @@ export interface DirectiveNode extends Node {
 
 /**
  * 静态类型级别
- * 告级别的兼容低级别
- * eg: a node that can be stringified can always be hoisted and skipped for patch.
+ * 高级别的兼容低级别
+ * eg: 一个节点可以被字符串化，那它肯定可以提升，也能跳过修改
  */
 export const enum ConstantTypes {
   NOT_CONSTANT = 0, // 变量

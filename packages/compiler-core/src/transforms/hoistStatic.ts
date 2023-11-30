@@ -59,7 +59,7 @@ function walk(
 
   for (let i = 0; i < children.length; i++) {
     const child = children[i]
-    // 只有纯元素和文本才能做提升
+    // 如果是html元素
     if (
       child.type === NodeTypes.ELEMENT &&
       child.tagType === ElementTypes.ELEMENT
@@ -74,8 +74,9 @@ function walk(
         hoistedCount++
         continue
       } else {
-        // 节点可能包含动态子节点，但其 props 可能适合提升。
+        // 节点可能包含动态子节点，但其 props 可能适合提升
         const codegenNode = child.codegenNode!
+        // 如果是单个VNode
         if (codegenNode.type === NodeTypes.VNODE_CALL) {
           const flag = getPatchFlag(codegenNode)
           if (
@@ -97,7 +98,7 @@ function walk(
       }
     }
 
-    // walk further
+    // 对子节点也做提升转换
     if (child.type === NodeTypes.ELEMENT) {
       const isComponent = child.tagType === ElementTypes.COMPONENT
       if (isComponent) {
@@ -126,7 +127,7 @@ function walk(
     context.transformHoist(children, context, node)
   }
 
-  // all children were hoisted - the entire children array is hoistable.
+  // 所有children都被提升
   if (
     hoistedCount &&
     hoistedCount === originalCount &&
@@ -139,16 +140,12 @@ function walk(
     const hoisted = context.hoist(
       createArrayExpression(node.codegenNode.children)
     )
-    // #6978, #7138, #7114
-    // a hoisted children array inside v-for can caused HMR errors since
-    // it might be mutated when mounting the v-for list
-    if (context.hmr) {
-      hoisted.content = `[...${hoisted.content}]`
-    }
+
     node.codegenNode.children = hoisted
   }
 }
 
+// 获取常量类型
 export function getConstantType(
   node: TemplateChildNode | SimpleExpressionNode,
   context: TransformContext
@@ -178,12 +175,11 @@ export function getConstantType(
       if (!flag) {
         let returnType = ConstantTypes.CAN_STRINGIFY
 
-        // Element itself has no patch flag. However we still need to check:
+        // 元素本身是没有patch标记的，但是还是需要做检测：
 
-        // 1. Even for a node with no patch flag, it is possible for it to contain
-        // non-hoistable expressions that refers to scope variables, e.g. compiler
-        // injected keys or cached event handlers. Therefore we need to always
-        // check the codegenNode's props to be sure.
+        // 1.即使对于没有补丁标志的节点，它也可能包含引用范围变量的不可提升表达式
+        // eg: 编译器注入的键或缓存的事件处理程序。
+        // 因此，我们需要始终检查 codegenNode 的 props 以确定。
         const generatedPropsType = getGeneratedPropsConstantType(node, context)
         if (generatedPropsType === ConstantTypes.NOT_CONSTANT) {
           constantCache.set(node, ConstantTypes.NOT_CONSTANT)
@@ -193,7 +189,7 @@ export function getConstantType(
           returnType = generatedPropsType
         }
 
-        // 2. its children.
+        // 2. 子节点，子节点的最小值，将决定父节点的ConstantType
         for (let i = 0; i < node.children.length; i++) {
           const childType = getConstantType(node.children[i], context)
           if (childType === ConstantTypes.NOT_CONSTANT) {
@@ -205,10 +201,8 @@ export function getConstantType(
           }
         }
 
-        // 3. if the type is not already CAN_SKIP_PATCH which is the lowest non-0
-        // type, check if any of the props can cause the type to be lowered
-        // we can skip can_patch because it's guaranteed by the absence of a
-        // patchFlag.
+        // 3. 如果类型还不是最低的非 0 类型 CAN_SKIP_PATCH，请检查是否有任何 props 可以导致类型降低
+        // 我们可以跳过 can_patch，因为它是由缺少 patchFlag 保证的。
         if (returnType > ConstantTypes.CAN_SKIP_PATCH) {
           for (let i = 0; i < node.props.length; i++) {
             const p = node.props[i]
@@ -225,11 +219,9 @@ export function getConstantType(
           }
         }
 
-        // only svg/foreignObject could be block here, however if they are
-        // static then they don't need to be blocks since there will be no
-        // nested updates.
+        // 只有 svg/foreignObject 在这里可能是块，但是如果它们是静态的，那么它们不需要被阻止，因为不会有嵌套更新。
         if (codegenNode.isBlock) {
-          // except set custom directives.
+          // 除了设置自定义指令
           for (let i = 0; i < node.props.length; i++) {
             const p = node.props[i]
             if (p.type === NodeTypes.DIRECTIVE) {
@@ -280,10 +272,6 @@ export function getConstantType(
       }
       return returnType
     default:
-      if (__DEV__) {
-        const exhaustiveCheck: never = node
-        exhaustiveCheck
-      }
       return ConstantTypes.NOT_CONSTANT
   }
 }
